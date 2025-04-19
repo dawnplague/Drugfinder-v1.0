@@ -1,0 +1,595 @@
+##First using ppi analysis on sequencing data-mining data and guarantee potential genes
+##Then read the potential genes and marker genes
+##Taking lung cancer for example
+setwd("D:/lung_cancer")
+library(stringr)
+library(data.table)
+library(dplyr)
+
+#读取GEO数据并形式上合并
+f <- list.files(pattern="_processed.csv",full.names=TRUE,recursive=TRUE)
+f1 <- lapply(f,fread)
+nms <- gsub("_processed.csv","",basename(f))
+f1 <- mapply(function(x,y) {nm <- names(x)
+                            idx <- !nm=="Gene"
+                            names(x)[idx] <- paste0(y,"_",nm[idx])
+                            x},x=f1,y=nms,SIMPLIFY=FALSE)
+
+f1 <- Reduce(function(...) merge.data.table(...,all=TRUE),f1)
+#f1 <- f1[grep("[0-9][0-9]-[A-Z][a-z][a-z]|^__",gene,invert=TRUE)]
+f1[is.na(f1)] <- 0
+fwrite(f1,"Lung_target_combine.csv")
+
+
+###Sorting###
+FILE<-"Lung_target_combine.csv"   ##for transcriptome data for single source
+f<-fread(FILE,check.names=TRUE)
+nms <- colnames(f)
+s=f[,rowSums(.SD,na.rm=TRUE),.SDcols=nms[-1]]
+f <- f[s>500,]
+nms <- names(f)
+s <- f[,lapply(.SD,function(x) sum(x>0)),.SDcols=nms[-1]] %>% as.numeric
+n <- nrow(f)
+nm1<-nms[s<2]
+if (length(nm1)>0) f[,(nm1):=NULL]
+FILEOUT0<-strsplit(FILE,split="_")[[1]][1]
+FILEOUT1<-paste(FILEOUT0,"_filtered.csv",sep="")
+FILEOUT2<-paste(FILEOUT0,"_rules.csv",sep="")
+f2<-as.matrix(f)
+gene00<-f2[,1]
+susu3<-f2[which(!str_detect(gene00,"[0-9][0-9][0-9][0-9]")),]
+gene<-as.character(susu3[,1])
+susu3<-susu3[which(!str_detect(gene,"-")),]
+gene<-as.character(susu3[,1])
+susu3<-susu3[which(!str_detect(gene,"_")),]
+gene<-as.character(susu3[,1])
+susu3<-susu3[which(!str_detect(gene,"orf")),]
+gene<-as.character(susu3[,1])
+f3<-f2[which(gene00 %in% gene),]
+col3<-colnames(f3)
+f4<-f3[,which(!str_detect(col3,"_fold_"))]
+f4<-f4[,which(!str_detect(colnames(f4),"_p_"))]
+fwrite(f4,FILEOUT1,row.names=FALSE)
+
+
+##Readin methylation data
+FILE<-"LUAD-Normalized-Methylation_combined.csv"
+FILEOUT0<-strsplit(FILE,split="_")[[1]][1]
+FILEOUT1<-paste(FILEOUT0,"_filtered.csv",sep="")
+FILEOUT2<-paste(FILEOUT0,"_rules.csv",sep="")
+f<-fread(FILE,check.names=TRUE)
+nms <- colnames(f)
+s=f[,rowSums(.SD,na.rm=TRUE),.SDcols=nms[-1]]
+f <- f[s>10,]
+nms <- names(f)
+s <- f[,lapply(.SD,function(x) sum(x>0)),.SDcols=nms[-1]] %>% as.numeric
+n <- nrow(f)
+nm1<-nms[s<2]
+if (length(nm1)>0) f[,(nm1):=NULL]
+numf<-dim(f)[2]
+f[,2:numf]<-(-1)*f[,2:numf]
+f2<-as.matrix(f)
+gene00<-f2[,1]
+susu3<-f2[which(!str_detect(gene00,"[0-9][0-9][0-9][0-9]")),]
+gene<-as.character(susu3[,1])
+susu3<-susu3[which(!str_detect(gene,"-")),]
+gene<-as.character(susu3[,1])
+susu3<-susu3[which(!str_detect(gene,"_")),]
+gene<-as.character(susu3[,1])
+susu3<-susu3[which(!str_detect(gene,"orf")),]
+gene<-as.character(susu3[,1])
+f3<-f2[which(gene00 %in% gene),]
+fwrite(f3,FILEOUT1,row.names=FALSE)
+
+##2023.8.27 -- Changing alternatively
+###############
+library(data.table)
+library(dplyr)
+library(Matrix)
+f_in<-fread(FILEOUT1,check.names=TRUE)
+rns <- f_in[,Gene]
+f_in[,Gene:=NULL]
+f_in<-as.matrix(f_in)
+for (ii in c(2,3,5,7)){
+  seqs<-ii   ##set randomly
+  probs0<-(1/seqs)*(1:(seqs-1))
+  ff3<-matrix(0,dim(f_in)[1],dim(f_in)[2])
+  mark1<-rep(0,dim(f_in)[2])
+  for (i in 1:dim(f_in)[2]) {
+    f0<-f_in[,i]
+    f00<-f0[which(f0!=0)]
+    x1 <- quantile(f00,probs= probs0)
+    nx1<-length(x1)
+    for (j in 1:nx1) {
+          ff3[which(f0>x1[j]),i]<-ff3[which(f0>x1[j]),i]+1
+         }
+      }
+  max3<-max(ff3)
+  f<-ff3
+  f <- as.matrix(f)
+  f <- as(f,"sparseMatrix")
+   l <- ncol(f)
+  v1 <- f
+  v1[!v1==1] <- 0
+  v1 <-  tcrossprod(v1)
+   if (max3>=2){
+     for (i in 2:max3){
+        v2 <- f
+        v2[!v2==i] <- 0
+        v2 <-  tcrossprod(v2)
+         v1<-v1+v2
+         }
+     }
+  term_xy <- v1
+  term_x <- Matrix(diag(v1),nrow=nrow(v1),ncol=ncol(v1),byrow=FALSE,sparse=T)
+  term_xy[term_xy==0] <- 1e-6
+  term_x[term_x==0] <- 1e-6
+  xy <- as.data.table(summary(term_xy))
+  x <- as.data.table(summary(term_x))
+  xy[,xy:=x]
+  xy[,x:=NULL]
+  res <- merge(xy,x,by=c("i","j"))
+  colnames(res)[3]<-paste(colnames(res)[3],ii,sep="_")
+  colnames(res)[4]<-paste(colnames(res)[4],ii,sep="_")
+  if (ii==2) res2<-res
+  if (ii>2) res2 <- merge(res2,res,by=c("i","j"))
+  gc()
+  }
+l <- ncol(f)
+res2[,from:=rns[i]]
+res2[,to:=rns[j]]
+res2[,rule3:=0]
+res2[,rule4:=0]
+res2[x_2>0.1*l & xy_2>0.1*l,rule3:=xy_2/x_2]
+res2[,rule4:=xy_2+x_2]
+res2[x_3>0.1*l & xy_3>0.1*l,rule3:=xy_3/x_3+rule3]
+res2[,rule4:=xy_3+x_3+rule4]
+res2[x_5>0.1*l & xy_5>0.1*l,rule3:=xy_5/x_5+rule3]
+res2[,rule4:=xy_5+x_5+rule4]
+res2[x_7>0.1*l & xy_7>0.1*l,rule3:=xy_7/x_7+rule3]
+res2[,rule4:=xy_7+x_7+rule4]
+res3<-res2[,.(from,to,rule3,rule4)]
+res3<-res3[from!=to,]
+confi<-res3[,rule3]
+res4<-res3[which(confi>0),]
+colnames(res4)[3:4]<-c("Confidence","Support")
+res4<-res4[which(Support>quantile(Support)[2]),]
+fwrite(res4,FILEOUT2,row.names=FALSE)
+
+
+
+##converting numeric data into discrete data
+library(data.table)
+library(dplyr)
+library(Matrix)
+f<-fread(FILEOUT1,check.names=TRUE)
+rns <- f[,Gene]
+f[,Gene:=NULL]
+nms <- names(f)
+f[,(nms):=lapply(.SD,function(x) {x1 <- quantile(x,probs= c(0.25,0.5,0.75))
+                                y <- rep(0,length(x))
+                                y[x>x1[3]] <- 3
+                                y[x<=x1[3]&x>x1[2]] <- 2
+                                y[x<=x1[2]&x>x1[1]] <- 1  
+                                y}),.SDcols=nms]
+
+f1 <- f
+f1[!f1==3] <- 0                                
+
+f <- as.matrix(f)
+f <- as(f,"sparseMatrix")
+
+f1 <- as.matrix(f1)
+f1 <- as(f1,"sparseMatrix")
+
+v1 <- f
+v1[!v1==1] <- 0
+v1 <-  tcrossprod(v1)
+
+v2 <- f
+v2[!v2==2] <- 0
+v2[v2==2] <- 1
+v2 <-  tcrossprod(v2)
+
+v3 <- f
+v3[!v3==3] <- 0
+v3[v3==3] <- 1
+v3 <- tcrossprod(v3)
+
+v <- v1+v2+v3
+
+v11 <- f1
+v11[!v11==1] <- 0
+v11 <-  tcrossprod(v11)
+
+v21 <- f1
+v21[!v21==2] <- 0
+v21[v21==2] <- 1
+v21 <-  tcrossprod(v21)
+
+v31 <- f1
+v31[!v31==3] <- 0
+v31[v31==3] <- 1
+v31 <- tcrossprod(v31)
+
+v <- v1+v2+v3
+v1 <- v11+v21+v31
+
+l <- ncol(f)
+
+term_xy <- v
+term_x <- Matrix(diag(v),nrow=nrow(v),ncol=ncol(v),byrow=FALSE,sparse=T)
+term_xy[term_xy==0] <- 1e-6
+term_x[term_x==0] <- 1e-6
+xy <- as.data.table(summary(term_xy))
+x <- as.data.table(summary(term_x))
+xy[,xy:=x]
+xy[,x:=NULL]
+res <- merge(xy,x,by=c("i","j"))
+
+term_xy1 <- v1
+term_x1 <- Matrix(diag(v1),nrow=nrow(v1),ncol=ncol(v1),byrow=FALSE,sparse=T)
+term_xy1[term_xy1==0] <- 1e-6
+term_x1[term_x1==0] <- 1e-6
+xy1 <- as.data.table(summary(term_xy1))
+x1 <- as.data.table(summary(term_x1))
+xy1[,xy1:=x]
+xy1[,x:=NULL]
+x1[,x1:=x]
+x1[,x:=NULL]
+res1 <- merge(xy1,x1,by=c("i","j"))
+
+res2 <- merge(res,res1,by=c("i","j"))
+res2[,from:=rns[i]]
+res2[,to:=rns[j]]
+res2[,rule3:=0]
+res2[,rule4:=0]
+res2[x1>0.1*l&xy1>0.1*l,rule3:=xy1/x1]
+res2[,rule4:=xy1+x1]
+res2[x>0.1*l&xy>0.1*l,rule3:=xy/x+rule3]
+res2[,rule4:=xy+x+rule4]
+res_filter<-res2
+resi<-res_filter[,i]
+resj<-res_filter[,j]
+res_filter2<-res_filter[which(resi!=resj),]
+res_filter2<-res_filter2[,7:10]
+colnames(res_filter2)[3:4]<-c("Confidence","Support")
+confi2<-res_filter2[,Confidence]
+res_filter3<-res_filter2[which(confi2>0),]
+fwrite(res_filter3,FILEOUT2,row.names=FALSE)
+
+   ##Adding rules for different sources
+aa2<-c("Pantumor_rules.csv","TCGA-Normalized-Methylation_rules.csv")
+lena<-length(aa2)
+bb2<-aa2
+for (i in 1:lena) bb2[i]<-strsplit(aa2[i],split="_")[[1]][1]
+bulkfile<-list()
+bulkfile[lena]<-0
+rows<-""
+for (i in 1:lena){
+    bulkfile[[i]]<-fread(aa2[i])
+    bulkfile[[i]]<-as.matrix(bulkfile[[i]])
+    colnames(bulkfile[[i]])[3]<-paste(colnames(bulkfile[[i]])[3],bb2[i],sep="_")
+   colnames(bulkfile[[i]])[4]<-paste(colnames(bulkfile[[i]])[4],bb2[i],sep="_")
+    #rule1<-bulkfile[[i]][,1]
+   # rule2<-bulkfile[[i]][,2]
+   # kk<-paste(rule1,rule2,sep=";")
+   # rownames(bulkfile[[i]])<-kk
+    #rows<-union(rows,kk)
+     }
+aaa<-bulkfile[[1]]
+for (i in 2:lena) aaa<-merge(aaa,bulkfile[[i]],by=c("from","to"))
+numaaa<-dim(aaa)[2]
+colaaa<-colnames(aaa)
+aaa2<-aaa[,which(substr(colaaa,1,5)=="Confi")]
+aaa3<-aaa[,which(substr(colaaa,1,5)=="Suppo")]
+aaa2<-apply(aaa2,2,as.numeric)
+aaa3<-apply(aaa3,2,as.numeric)
+ss2<-rowSums(aaa2)
+ss3<-rowSums(aaa3)
+aaaa<-cbind(aaa[,1:2],ss2,ss3)
+colnames(aaaa)<-c(colnames(aaa)[1:2],"Confidence","Support")
+#support<-quantile(aaaa[,4])[2]
+#aaaa2<-aaaa[which(aaaa[,4]>support),]
+fwrite(aaaa,"Arules_allomics_adding.csv",row.names=FALSE)     
+  
+
+   ##Using correlation on filtering data  -- not used
+f<-read.csv(FILE,check.names=TRUE)
+result_arules3<-read.csv("Arules_allomics_adding.csv")
+len31<-dim(result_arules3)[1]
+num31<-dim(result_arules3)[2]
+rule31<-result_arules3[,1]
+rule32<-result_arules3[,2]
+nms<-rownames(f)
+lenf<-dim(f)[1]
+gene<-f[,1]
+cor31<-rep(0,len31)
+for (i in 1:len31) {
+   k1<-which(gene==rule31[i])
+   k2<-which(gene==rule32[i])
+   lenk1<-length(k1)
+   lenk2<-length(k2)
+   if (lenk1*lenk2==0) next
+   count1<-f[k1,2:num31]
+   count2<-f[k2,2:num31]
+   cor31[i]<-cor(as.numeric(count1),as.numeric(count2))
+  }
+result_arules3$cor31<-cor31
+result_arules31<-result_arules3[which(cor31>0.75),]    ##set manually here (0.75) according to the output or user requirements
+#result_arules32<-result_arules3[which(cor31<(-0.6)),]  ##if requiring negative correlation
+#result_arules31<-rbind(result_arules31,result_arules32)
+fwrite(result_arules32,"Arules_allomics_adding_filtered.csv",row.names=FALSE)
+ 
+   ##Conversion into rules matrix
+#result_arules3<-read.csv("Arules_allomics_adding_filtered.csv")
+result_arules3<-read.csv("Arules_allomics_adding.csv")
+rule31<-as.character(result_arules3[,1])
+rule32<-as.character(result_arules3[,2])
+urule31<-unique(rule31)
+urule32<-unique(rule32)
+len31<-length(urule31)
+len32<-length(urule32)
+matrix_rules<-matrix(0,len31,len32)
+rownames(matrix_rules)<-urule31
+colnames(matrix_rules)<-urule32
+lenc<-dim(result_arules3)[1]
+for (i in 1:lenc){
+     ra1<-result_arules3[i,1]
+     ra2<-result_arules3[i,2]
+     matrix_rules[ra1,ra2]<-result_arules3[i,3]
+     }
+write.csv(matrix_rules,"Arules_allomics_rules_matrix_addingrules.csv")
+
+   ##Migration new -- 2024.12.6
+matrix_rules<-fread("Arules_allomics_rules_matrix_addingrules.csv")
+matrix_rules<-as.data.frame(matrix_rules)
+matrix_rules2<-matrix_rules[,-1]
+genem1<-as.character(matrix_rules[,1])
+matrix_rules2<-apply(matrix_rules2,2,as.numeric)
+rownames(matrix_rules2)<-genem1
+#codata<-read.csv("5-FU_resistance_standard_tm.csv")
+codata<-read.csv("Platin_pacli_resistance_genes_tm.csv")
+codata<-codata[,c(1,4)]
+codata<-codata[which(codata[,2]>0),]
+geneco<-as.character(codata[,1])
+codata2<-codata[,-1]
+codata2<-as.matrix(codata2)
+colnames(codata2)<-"Pacli_resistance"
+codata2<-apply(codata2,2,as.numeric)
+rownames(codata2)<-geneco
+genem2<-colnames(matrix_rules2)
+intergene<-intersect(genem2,geneco)
+matrix_rules3<-matrix_rules2[,intergene]
+codata3<-codata2[intergene,]
+codata3<-as.matrix(codata3)
+colnames(codata3)<-"Pacli_resistance"
+   ##Matching codata3 to matrix_rules3
+matrix5<-codata3
+rule5<-matrix_rules3
+rule50<-rule5[which(rule5!=0)]
+quantr5<-quantile(rule50,probs=seq(0,1,0.01))
+max5<-max(matrix5)
+rul5<-max(rule5)
+sss0<-Inf
+ITER<-100000000
+for (ss in 1:ITER){
+    switch<-sample(0:3,1)
+    if (switch==0) {
+         if (max5==0) next
+         if (rul5>=max5) k1<-runif(1,1,rul5/max5)
+         if (rul5<max5) k1<-runif(1,0,rul5/max5)
+         matrix61<-matrix5*k1
+         }
+    if (switch==1) {
+         kk<-runif(1,1.1,30)
+         matrix6<-log(matrix5)/log(kk)
+         max6<-max(matrix6)
+         if (max6==0) next
+         if (rul5>=max6) k1<-runif(1,1,rul5/max6)
+         if (rul5<max6) k1<-runif(1,0,rul5/max6)
+         matrix61<-matrix6*k1
+         matrix61[which(matrix61==-Inf)]<-0
+         }
+    if (switch==2){
+        kk<-runif(1,0.01,30)
+        matrix6<-matrix5^kk
+        max6<-max(matrix6)
+       if (max6==Inf) next
+       if (max6==0) next
+        if (rul5>=max6) k1<-runif(1,1,rul5/max6)
+        if (rul5<max6) k1<-runif(1,0,rul5/max6)
+        matrix61<-matrix6*k1
+        }
+    if (switch==3){
+       kk<-runif(1,1,10)
+       matrix6<-kk^matrix5
+        max6<-max(matrix6)
+        if (max6==Inf) next
+        if (max6==0) next
+        if (rul5>=max6) k1<-runif(1,1,rul5/max6)
+        if (rul5<max6) k1<-runif(1,0,rul5/max6)
+        matrix61<-matrix6*k1
+        }    
+    matrix50<-matrix61[which(matrix61!=0)]
+    quantm5<-quantile(matrix50,probs=seq(0,1,0.01))
+    mean1<-runif(1,0,rul5)
+    mean2<-runif(1,0,max(matrix61))
+    quantr6<-quantr5+mean2
+    quantm6<-quantm5+mean1
+    sss<-sum((quantr6-quantm6)^2)
+    if (sss<sss0) {
+         sss0<-sss
+         record_matrix6<-matrix61+mean1
+         record_matrix6[which(matrix61==0)]<-0
+         mean20<-mean2   
+         }
+    }
+record_matrix<-record_matrix6
+rule7<-rule5+mean20
+rule7[which(rule5==0)]<-0
+  ##
+matrix_rules3<-rule7
+codata3<-record_matrix
+matrix4<-matrix_rules3 %*% codata3
+write.csv(matrix4,"Pacli_resistance_migration_direct.csv")
+#write.csv(matrix4,"5fu_resistance_migration_direct.csv")
+
+
+##Conversion -- 2023.9.18
+#data1e<-read.csv("5fu_resistance_migration_direct.csv")
+data1e<-read.csv("Pacli_resistance_migration_direct.csv")
+data1e<-data1e[which(data1e[,2]>quantile(data1e[,2])[4]),]
+drug_data<-fread("Gene_drug_interactions_nontoxic.csv")   ##Drug-gene interaction file after non-toxic filtering
+drug_data<-as.matrix(drug_data)
+drug_gene<-as.character(drug_data[,1])
+drug_score<-as.numeric(drug_data[,10])
+drug<-as.character(drug_data[,8])
+drug_original<-""
+freq<-0
+tt<-1
+bulk<-list()
+bulk[1]<-0
+bulk[[1]]<-data1e[,1]
+len1<-length(bulk)
+for (i in 1:len1){
+    gene<-bulk[[i]]
+    leng<-length(gene)
+    for (j in 1:leng){
+         jj<-which(gene[j]==drug_gene)
+         if (length(jj)==0) next
+         drug0<-unique(drug[jj])
+         drug11<-intersect(drug0,drug_original)
+         drug12<-setdiff(drug0,drug11)
+         freq[which(drug_original %in% drug11)]<- freq[which(drug_original %in% drug11)]+1
+         drug_original<-c(drug_original,drug12)
+         freq<-c(freq,rep(1,length(drug12)))
+         }
+   }
+drug_freq<-cbind(drug_original,freq)
+colnames(drug_freq)<-c("Drug","Frequency")
+drug_freq<-drug_freq[which(drug_original!=""),]
+write.csv(drug_freq,"5fu_resistance_Frequency_direct.csv",row.names=FALSE)
+drugs<-read.csv("5fu_resistance_Frequency_direct.csv")
+drug00<-as.character(drugs[,1])
+freq00<-as.numeric(drugs[,2])
+for (tt in 0:max(freq00)){
+   count_tt<-length(which(freq00>=(max(freq00)-tt)))
+   if (count_tt<30) drug01<-drug00[which(freq00>=(max(freq00)-tt))] 
+    }
+gene01<-unique(unlist(bulk))
+gene_all<-gene01
+drug_data2<-drug_data[intersect(which(drug_gene %in% gene01),which(drug %in% drug01)),]
+drug_data3<-drug_data2[,c(1,8,10)]
+#write.csv(drug_data3,"5fu_resistance_drugs_drivers_direct.csv",row.names=FALSE)   ##Use excel in sorting to keep selected drugs
+write.csv(drug_data3,"Pacli_resistance_drugs_drivers_direct.csv",row.names=FALSE)  
+
+
+  ##D-G matrix Generation direct -- version 2023.9.7
+#drug_data30<-read.csv("5fu_resistance_drugs_drivers_direct.csv")
+drug_data30<-read.csv("Pacli_resistance_drugs_drivers_direct.csv")
+gene30<-as.character(drug_data30[,1])
+drug30<-as.character(drug_data30[,2])
+score30<-as.numeric(drug_data30[,3])
+udrug30<-unique(drug30)
+ugene30<-unique(gene30)
+ugene30<-intersect(ugene30,data1e[,1])
+len_drug<-length(udrug30)
+len_gene<-length(ugene30)
+matrix_dg<-matrix(0,len_drug,len_gene)
+for (i in 1:len_drug){
+   ii<-which(udrug30[i]==drug30)
+   for (j in 1:len_gene){
+          jj<-which(ugene30[j]==gene30)
+          ij<-intersect(ii,jj)
+          if (length(ij)==0) next
+          if (length(ij)>1) {matrix_dg[i,j]<-max(score30[ij]); next}
+          matrix_dg[i,j]<-score30[ij]
+        }
+    }
+colnames(matrix_dg)<-ugene30
+rownames(matrix_dg)<-udrug30  
+    ##G-C matrix Generation
+row1e<-data1e[,1]
+data1f<-as.matrix(data1e[,-1])
+rownames(data1f)<-row1e
+data1f<-data1f[ugene30,]
+data1f<-as.matrix(data1f)
+     ##Random-Calculator Selection
+matrix5<-matrix_dg
+num5<-dim(matrix5)[2]
+rule5<-data1f
+rule50<-rule5[which(rule5!=0)]
+quantr5<-quantile(rule50,probs=seq(0,1,0.01))
+max5<-max(matrix5)
+rul5<-max(rule5)
+sss0<-Inf
+ITER<-100000000
+for (ss in 1:ITER){
+    switch<-sample(0:3,1)
+    if (switch==0) {
+         if (max5==0) next
+         if (rul5>=max5) k1<-runif(1,1,rul5/max5)
+         if (rul5<max5) k1<-runif(1,0,rul5/max5)
+         matrix61<-matrix5*k1
+         }
+    if (switch==1) {
+         kk<-runif(1,1.1,30)
+         matrix6<-log(matrix5)/log(kk)
+         max6<-max(matrix6)
+         if (max6==0) next
+         if (rul5>=max6) k1<-runif(1,1,rul5/max6)
+         if (rul5<max6) k1<-runif(1,0,rul5/max6)
+         matrix61<-matrix6*k1
+         matrix61[which(matrix61==-Inf)]<-0
+         }
+    if (switch==2){
+        kk<-runif(1,0.01,30)
+        matrix6<-matrix5^kk
+        max6<-max(matrix6)
+        if (max6==Inf) next 
+        if (max6==0) next
+        if (rul5>=max6) k1<-runif(1,1,rul5/max6)
+        if (rul5<max6) k1<-runif(1,0,rul5/max6)
+        matrix61<-matrix6*k1
+        }
+    if (switch==3){
+       kk<-runif(1,1,10)
+       matrix6<-kk^matrix5
+        max6<-max(matrix6)
+        if (max6==Inf) next
+        if (max6==0) next
+        if (rul5>=max6) k1<-runif(1,1,rul5/max6)
+        if (rul5<max6) k1<-runif(1,0,rul5/max6)
+        matrix61<-matrix6*k1
+        }    
+    matrix50<-matrix61[which(matrix61!=0)]
+    quantm5<-quantile(matrix50,probs=seq(0,1,0.01))
+    mean1<-runif(1,0,rul5)
+    mean2<-runif(1,0,max(matrix61))
+    quantr6<-quantr5+mean2
+    quantm6<-quantm5+mean1
+    sss<-sum((quantr6-quantm6)^2)
+    if (sss<sss0) {
+         sss0<-sss
+         record_matrix6<-matrix61+mean1
+         record_matrix6[which(matrix61==0)]<-0
+         mean20<-mean2   
+         }
+    }
+record_matrix<-record_matrix6
+rule7<-rule5+mean20
+rule7[which(rule5==0)]<-0
+     ##
+rule500<-rule7
+matrix_dg<-record_matrix
+    ##Data multiplex
+aa<-matrix_dg
+colaa<-colnames(aa)
+rule501<-as.matrix(rule500[colaa,])
+ab<-aa %*% rule501
+colnames(ab)[1]<-"5fu_resistance"
+#write.csv(ab,"5fu_resistance_Drug_direct_Final.csv")
+write.csv(ab,"Pacli_resistance_Drug_direct_Final.csv")
+    ####
+
